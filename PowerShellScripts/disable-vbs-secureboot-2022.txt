@@ -1,0 +1,94 @@
+
+Function Set-VBS {
+<#
+  Author:  Reza Namin
+           Disable Virtualization Based Security setting
+   
+#>
+
+
+$spec = New-Object VMware.Vim.VirtualMachineConfigSpec
+
+$flags = New-Object VMware.Vim.VirtualMachineFlagInfo
+
+$flags.VbsEnabled = $false
+
+$spec.flags = $flags
+
+$vm.ExtensionData.ReconfigVM($spec)
+}
+
+
+Function Set-SecureBoot {
+    <#
+    
+    Author:  Reza Namin
+    disable Secure Boot
+    
+    #>
+    param(
+        
+        [Switch]$Enabled,
+        [Switch]$Disabled
+     )
+
+    if($Enabled) {
+        $secureBootSetting = $true
+        $reconfigMessage = "Enabling Secure Boot for $Vm"
+    }
+    if($Disabled) {
+        $secureBootSetting = $false
+        $reconfigMessage = "Disabling Secure Boot for $Vm"
+
+    }
+
+    $spec = New-Object VMware.Vim.VirtualMachineConfigSpec
+    $bootOptions = New-Object VMware.Vim.VirtualMachineBootOptions
+    $bootOptions.EfiSecureBootEnabled = $secureBootSetting
+    $spec.BootOptions = $bootOptions
+  
+    Write-Host "$reconfigMessage ..."
+    $task = $vm.ExtensionData.ReconfigVM_Task($spec)
+    $task1 = Get-Task -Id ("Task-$($task.value)")
+    $task1 | Wait-Task | Out-Null
+
+}
+
+# Get list all the Windows Server 2022 PoweredOn VMs. Shutdown and wait till VM power state is off. Loop through the VMs list.
+
+$VMS = Get-VM | where{$_.Guest.OSFullName -match '2022' -and $_.PowerState -eq 'PoweredOn'}
+
+foreach ($VM in $VMS){
+
+if ($_.Guest.State -eq "Running") {
+        write-host "Shutting down $VM"
+       
+        Shutdown-VMGuest -Confirm:$false
+
+    }
+    else {
+        write-host "Shutting down $VM"
+        
+        Stop-VM -VM $VM -Confirm:$false
+    }
+
+#
+
+#Wait till VM is PoweredOff. Get the updated state of the VM in the loop. Need to do Get-VM again.
+ 
+
+do {
+            Start-Sleep -Seconds 10
+            Write-Host -NoNewline '|' $VM.powerstate
+   } until ((Get-VM $VM).powerstate -eq "PoweredOff")
+
+
+# Call Set-VBS function first to disable VBS, then call Set-SecureBoot function to disable Secure Boot settting. Wait for 10 seconds before starting the VM.
+
+$VM.name | Set-VBS
+$VM.name | Set-SecureBoot -Disabled
+
+write-host "Starting $VM back up"
+Start-VM -VM $VM -Confirm:$false -RunAsync
+
+}
